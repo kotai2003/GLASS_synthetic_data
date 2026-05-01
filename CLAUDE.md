@@ -8,12 +8,15 @@ This workspace wraps an upstream research codebase **and** builds a GUI applicat
 
 - `GLASS/` — upstream PyTorch implementation (its own git repo, MIT-licensed, mirror of `cqylunlun/GLASS`, gitignored from the parent repo). Treat as the working root for any model/training change.
 - `GLASS/dump_synthetic.py` — local CLI helper (added by this workspace, not upstream). Since 2026-05-02 it is a thin wrapper that delegates to `synthesizer_app.core.synthesis.synthesize_one`; output layout (`original/synthetic/mask/panel`) is unchanged for backward compat.
-- `GLASS/synthesizer_app/` — **NG-data synthesis GUI app**, the long-term deliverable. Local-only (not in the upstream git repo).
+- `GLASS/synthesizer_app/` — **NG-data synthesis GUI app**, the long-term deliverable. Lives inside the GLASS clone for development convenience but is **also published as a standalone public repo** (see "Standalone publication" below).
   - `core/synthesis.py` — pure LAS function `synthesize_one(image, texture, params, fg_mask=None) -> SynthResult`. Single source of truth for Perlin × DTD blending in this workspace.
+  - `core/_vendored/perlin.py` — vendored copy of upstream `GLASS/perlin.py` (MIT, attribution preserved). `synthesis.py` imports from here, **not** from `GLASS/perlin.py`, so the app is clone-and-run self-contained.
   - `core/io_utils.py` — generic recursive image enumeration (so non-DTD texture sources can plug in later).
+  - `core/exporter.py` — MVTec-compatible writer (`train/good`, `test/synthetic`, `ground_truth/synthetic`, `run.json`).
   - `ui/custom_styles_jp.py`, `ui/TR_inc_logo.png` — TOMOMI RESEARCH unified GUI style assets, copied from `skills/tomomi-gui-style/`.
-  - `ui/gui_main_ui.py`, `gui_main.py` — to be added in Phase 2+. Pure Tkinter + ttk (no Pygubu, per user decision).
+  - `ui/gui_main_ui.py`, `gui_main.py` — pure Tkinter + ttk app (no Pygubu, per user decision). Threaded batch worker + `queue.Queue`-based main-thread dispatch.
   - `tests/test_synthesis.py` — unittest for shape, determinism, fg-mask validation.
+  - `LICENSE`, `LICENSE_GLASS`, `README.md`, `requirements.txt` — standalone-repo metadata.
 - `GLASS/requirements_original.txt` — verbatim copy of `requirements.txt`. Used as the canonical install for `glass_env`.
 - `GLASS/requirements_updated_current_env.txt` — abandoned attempt to install GLASS into the system's Python 3.13 env. Kept for history only; do not install from it.
 - `00.docs/` — reference PDF of the GLASS paper (`2407.09359v1.pdf`, ECCV 2024) **and** `GLASS_synth_gui_plan.md` (the GUI-app implementation plan with phase breakdown and confirmed decisions).
@@ -201,3 +204,19 @@ Run unit tests:
 ```bash
 cd GLASS && "$GLASS_PY" -m unittest synthesizer_app.tests.test_synthesis -v
 ```
+
+### Standalone publication
+
+`synthesizer_app/` is **also pushed to its own public repo** at https://github.com/kotai2003/glass-synthesizer-app, default branch `main`. The mechanism is `git subtree split --prefix=synthesizer_app` from the **GLASS inner repo** into a `syn_split` branch, then `git push syn_origin syn_split:main`. Two repos hold the same code:
+
+| Repo | Role | Push target |
+|---|---|---|
+| `cqylunlun/GLASS` (this clone's origin) | upstream mirror, **never push to it** | — |
+| `kotai2003/glass-synthesizer-app` (`syn_origin`) | standalone distribution of `synthesizer_app/` | `git push syn_origin syn_split:main` after each split |
+
+When you change anything under `GLASS/synthesizer_app/`, the workflow to publish is:
+1. Commit inside the GLASS inner repo as usual.
+2. Re-run `git subtree split --prefix=synthesizer_app -b syn_split` (overwrites the local branch with the up-to-date split).
+3. `git push syn_origin syn_split:main`.
+
+The vendored `core/_vendored/perlin.py` is what makes the standalone repo runnable without GLASS — never replace it with a `from perlin import ...` that reaches into GLASS root, or the standalone repo will break on clone.

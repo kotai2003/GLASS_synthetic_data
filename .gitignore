@@ -1,2 +1,8 @@
 # 上流リポジトリ（cqylunlun/GLASS）はサブモジュールではなく単純な clone なので追跡しない
 GLASS/
+
+# Claude Code のローカル IDE 状態（権限決定リスト等）
+.claude/
+
+# dump_synthetic.py の出力（再生成可能な検証用 PNG、リポジトリにバンドルしない）
+synthetic_dump/

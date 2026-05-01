@@ -6,6 +6,9 @@ GLASS（[A Unified Anomaly Synthesis Strategy with Gradient Ascent for Industria
 
 **最終ゴール**: 手元の OK 画像と任意のテクスチャ画像から、下流 AI 異常検知モデル (PatchCore / EfficientAD など) の学習に使える **NG 画像 + 二値マスク** を MVTec 互換レイアウトで生成する Tkinter デスクトップアプリ。
 
+**📦 公開リポジトリ (standalone)**: https://github.com/kotai2003/glass-synthesizer-app
+本ワークスペースの `GLASS/synthesizer_app/` を vendored perlin 込みで公開し、clone 単体で動作するようにしたもの。本ワークスペースは「開発+検証 + 上流 GLASS との対比」用、公開リポは「配布用」と棲み分けます。
+
 ## ディレクトリ構成
 
 ```
@@ -19,9 +22,14 @@ GLASS（[A Unified Anomaly Synthesis Strategy with Gradient Ascent for Industria
 ├── GLASS/                                    上流 clone（.gitignore 済み）
 │   ├── dump_synthetic.py                     合成データのみダンプする CLI（synthesizer_app.core 経由）
 │   ├── synthesizer_app/                      ★ NG データ合成 GUI アプリ
-│   │   ├── core/                             LAS 合成エンジン (synthesis.py, io_utils.py)
+│   │   ├── core/                             LAS 合成エンジン
+│   │   │   ├── synthesis.py, exporter.py, io_utils.py
+│   │   │   └── _vendored/perlin.py           上流 perlin.py を vendored (MIT 帰属)
 │   │   ├── ui/                               Tkinter UI 層 + custom_styles_jp.py + ロゴ
-│   │   └── tests/                            unittest
+│   │   ├── tests/                            unittest
+│   │   ├── LICENSE / LICENSE_GLASS           MIT (本体) + 上流 MIT (vendored 部分)
+│   │   ├── README.md                         standalone repo 用
+│   │   └── requirements.txt                  glass_env 互換のピン
 │   ├── requirements.txt                      上流の元 pinning（無修正）
 │   ├── requirements_original.txt             requirements.txt のバックアップコピー
 │   └── requirements_updated_current_env.txt  Py3.13 環境向けの試行（不採用、参考保管）
@@ -102,17 +110,29 @@ cd "GLASS"
 > 2026-05-02: 内部実装は `synthesizer_app.core.synthesis.synthesize_one` を呼ぶラッパに置換済み。
 > CLI の出力フォーマットは互換維持。
 
-### NG データ合成 GUI アプリ（実装中）
+### NG データ合成 GUI アプリ
 
 実装プランは [`00.docs/GLASS_synth_gui_plan.md`](./00.docs/GLASS_synth_gui_plan.md)。
-現在 Phase 0 (雛形) + Phase 1 (コア合成関数) が完了。
+**Phase 0〜5 完了** (2026-05-02) — 基本機能・Configure タブ・スレッドワーカー・サムネイルストリップ全て実装済。
 
 ```
 GLASS/synthesizer_app/
-├── core/synthesis.py     # synthesize_one(image, texture, params) -> ng + mask
-├── core/io_utils.py      # 再帰的画像列挙（DTD 以外のテクスチャ集合にも対応）
-├── ui/                   # 純 Tkinter + ttk + 統一スタイル (Phase 2 以降)
-└── tests/test_synthesis.py
+├── core/
+│   ├── synthesis.py            synthesize_one(image, texture, params) -> ng + mask
+│   ├── exporter.py             MVTec 互換 writer
+│   ├── io_utils.py             再帰的画像列挙
+│   └── _vendored/perlin.py     上流 perlin.py を MIT vendoring (clone 単体で動作可)
+├── ui/                         純 Tkinter + ttk + 統一スタイル
+├── gui_main.py                 ロジック層 (threaded worker, queue-based main-thread dispatch)
+├── tests/test_synthesis.py     5/5 passing
+├── LICENSE / LICENSE_GLASS     MIT
+└── requirements.txt
+```
+
+起動:
+
+```bash
+cd GLASS && "$GLASS_PY" -m synthesizer_app.gui_main
 ```
 
 ユニットテスト:
@@ -121,7 +141,21 @@ GLASS/synthesizer_app/
 cd GLASS && "$GLASS_PY" -m unittest synthesizer_app.tests.test_synthesis -v
 ```
 
-**確定事項** (プラン §10): 純 Tkinter / MVTec 互換出力 / 元解像度保持 / 1 クラス専用 / fg マスク無し時は警告のみ。
+**確定事項** (プラン §10): 純 Tkinter / MVTec 互換出力 / 元解像度保持 / 1 クラス専用 / fg マスク無し時は警告のみ / `dump_synthetic.py` リファクタ済。
+
+#### 公開リポへの反映フロー
+
+`GLASS/synthesizer_app/` 下を変更したら以下を回す:
+
+```bash
+cd GLASS
+git add synthesizer_app/ ; git commit -m "..."
+git subtree split --prefix=synthesizer_app -b syn_split
+git push syn_origin syn_split:main
+```
+
+`syn_origin` は https://github.com/kotai2003/glass-synthesizer-app 。
+**`origin` (cqylunlun/GLASS 上流) には絶対 push しない**。
 
 ## 検証済みの動作
 
