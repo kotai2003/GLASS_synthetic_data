@@ -4,25 +4,81 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository layout
 
-This workspace wraps an upstream research codebase rather than being a single project:
+This workspace wraps an upstream research codebase **and** builds a GUI application on top of its anomaly-synthesis branch:
 
-- `GLASS/` — the actual PyTorch implementation (its own git repo, MIT-licensed, mirror of `cqylunlun/GLASS`). All code edits happen here.
-- `00.docs/` — reference PDF of the GLASS paper (`2407.09359v1.pdf`, ECCV 2024).
-- `skills/` — local Claude skills (`karphathy-guidelines/`, `tomomi-gui-style/`). These are guideline/style packs, not part of the model code.
-
-Treat `GLASS/` as the working root for any model/training change.
+- `GLASS/` — upstream PyTorch implementation (its own git repo, MIT-licensed, mirror of `cqylunlun/GLASS`, gitignored from the parent repo). Treat as the working root for any model/training change.
+- `GLASS/dump_synthetic.py` — local CLI helper (added by this workspace, not upstream). Since 2026-05-02 it is a thin wrapper that delegates to `synthesizer_app.core.synthesis.synthesize_one`; output layout (`original/synthetic/mask/panel`) is unchanged for backward compat.
+- `GLASS/synthesizer_app/` — **NG-data synthesis GUI app**, the long-term deliverable. Local-only (not in the upstream git repo).
+  - `core/synthesis.py` — pure LAS function `synthesize_one(image, texture, params, fg_mask=None) -> SynthResult`. Single source of truth for Perlin × DTD blending in this workspace.
+  - `core/io_utils.py` — generic recursive image enumeration (so non-DTD texture sources can plug in later).
+  - `ui/custom_styles_jp.py`, `ui/TR_inc_logo.png` — TOMOMI RESEARCH unified GUI style assets, copied from `skills/tomomi-gui-style/`.
+  - `ui/gui_main_ui.py`, `gui_main.py` — to be added in Phase 2+. Pure Tkinter + ttk (no Pygubu, per user decision).
+  - `tests/test_synthesis.py` — unittest for shape, determinism, fg-mask validation.
+- `GLASS/requirements_original.txt` — verbatim copy of `requirements.txt`. Used as the canonical install for `glass_env`.
+- `GLASS/requirements_updated_current_env.txt` — abandoned attempt to install GLASS into the system's Python 3.13 env. Kept for history only; do not install from it.
+- `00.docs/` — reference PDF of the GLASS paper (`2407.09359v1.pdf`, ECCV 2024) **and** `GLASS_synth_gui_plan.md` (the GUI-app implementation plan with phase breakdown and confirmed decisions).
+- `01.reports/GLASS_execution_plan.md` — detailed reproduction plan (datasets, risks, commands).
+- `01.reports/GLASS_dependency_install_report.md` — record of how `glass_env` was actually built and verified, including the imgaug × NumPy 2.x detour.
+- `synthetic_dump/<class>/{original,synthetic,mask,panel}/` — sample output of `dump_synthetic.py`. Inspectable evidence of the LAS branch's synthesis quality.
+- `skills/` — local Claude skills (`karphathy-guidelines/`, `tomomi-gui-style/`). The GUI-style skill is the design system the synthesizer GUI must follow.
 
 ## Environment
 
-The upstream README pins Python 3.9.15, CUDA 11.8, PyTorch 2.1.2 + torchvision 0.16.2, and was developed on an NVIDIA A800 (80 GB). Recreating the env:
+Use the existing **`glass_env` conda environment** for anything GLASS-related. Don't try to reuse the system `synthetic_data_py313` (Python 3.13 + numpy 2.x); the upstream `imgaug==0.4.0` calls `np.sctypes` which was removed in NumPy 2.0, and there are no Python 3.13 wheels for `numpy<2`.
 
-```
-conda create -n glass_env python=3.9.15
-conda activate glass_env
-pip install -r GLASS/requirements.txt
+`glass_env` was built to match the upstream pinning exactly:
+
+- **conda env path**: `C:\Users\seong\anaconda3\envs\glass_env`
+- **Python**: 3.9.15
+- **PyTorch**: 2.1.2+cu118 / torchvision 0.16.2+cu118 (installed from `https://download.pytorch.org/whl/cu118` *before* `pip install -r requirements_original.txt`, otherwise pip auto-picks a CPU wheel)
+- **CUDA wheel**: cu118; the local NVIDIA driver (595.97) supports CUDA 13 but is forward-compatible with cu118 binaries — verified working at runtime
+- **GPU**: NVIDIA RTX 3060 Laptop, **6 GB VRAM** — the upstream `--batch_size 8` setting may OOM; smoke test ran with `--batch_size 2`
+- **All other deps** at their upstream pins (numpy 1.26.3, imgaug 0.4.0, timm 0.9.12, pandas 1.5.2, etc.)
+
+Conda is not on `PATH` in the default Git Bash session. Either invoke the env's interpreter directly:
+
+```bash
+GLASS_PY="C:/Users/seong/anaconda3/envs/glass_env/python.exe"
+"$GLASS_PY" main.py ...
 ```
 
-`onnx`, `onnxruntime-gpu`, and `onnxsim` are pinned for the export pipeline; do not bump them casually.
+…or activate via the full conda path:
+
+```bash
+"C:/Users/seong/anaconda3/Scripts/conda.exe" activate glass_env
+```
+
+## Local datasets and quirks (this workstation)
+
+These paths are pinned for the host the workspace lives on. Pass them via CLI; do **not** edit upstream `shell/run-*.sh` to bake them in (those edits would dirty the upstream working tree).
+
+| Flag | Path | Notes |
+|---|---|---|
+| `--datapath` (mvtec) | `C:/Datasets-rev002/01.MVTEC_Anomaly_Detection` | All 15 standard classes present |
+| `--augpath` | `C:/Datasets-rev002/DTD/images` | Full DTD r1.0.1: 47 categories × ~120 jpg = 5640 jpg |
+
+Dataset quirks already accommodated:
+
+- **Class name mismatch**: the local layout has `leather_original` instead of `leather`. A Windows directory junction `C:\Datasets-rev002\01.MVTEC_Anomaly_Detection\leather` → `leather_original` was created so GLASS's hardcoded class name resolves correctly. Don't rename the junction or the underlying folder.
+- **No `fg_mask/`**: the official Foreground Mask zip from the README's Google Drive has not been downloaded. **Run with `--fg 0`** until it is. `--fg 1` will crash inside `MVTecDataset.__getitem__` because of the missing `fg_mask/<class>/<file>.png` lookup.
+- **`leather`/`carpet` shells contain extra sibling folders** (`capsule_wo_bg_clean`, `transistor-original`, `carpet/test-backup`, etc.). Harmless — GLASS only iterates folders matching its hardcoded class list. Don't include them in `-d` flags.
+
+## Reproduction state
+
+End-to-end smoke test on `mvtec_carpet` succeeded (2026-05-01):
+
+- Command: `--meta_epochs 1 --limit 8 --batch_size 2 --distribution 2 --fg 0 -d carpet`
+- Runtime: ~11 min (≈8 min was first-iteration CUDA warmup; subsequent iterations ≈1 sec each)
+- Result: I-AUROC 92.42 / P-AUROC 93.90 / P-PRO 78.03 with only 10 training samples seen (well below the paper's 99.9 / 99.3 but the pipeline runs cleanly)
+- Artifacts produced: `GLASS/results/models/backbone_0/mvtec_carpet/{ckpt.pth, ckpt_best_0.pth, tb/}`, 117 PNGs each in `results/{training,eval}/mvtec_carpet/`, `results/results.csv`
+
+What this means for future runs:
+
+- Full upstream training (`--meta_epochs 640 --limit 392 --batch_size 8` × 15 classes) is not feasible on the 6 GB GPU within reasonable wall time. Either drop to a much smaller `meta_epochs`/`limit`, swap to a smaller backbone, or use the upstream-released checkpoints for evaluation (`--test test`).
+- For "does the synthesis look right" investigations, prefer `dump_synthetic.py` (no GPU at all) over running training.
+- `--distribution 2` (force manifold) is the cleanest setting for isolated runs because it skips the xlsx side-effect machinery; only switch back to `--distribution 0/1` when you specifically want the spectrogram judgment.
+
+`onnx`, `onnxruntime-gpu`, and `onnxsim` are installed (per upstream pins) but the export workflow has not been exercised on this workstation. `onnxruntime-gpu==1.18.1` is built for CUDA 11.8 + cuDNN 8.x; if it fails at runtime under the current driver, fall back to CPU `onnxruntime`.
 
 ## Running training and evaluation
 
@@ -98,4 +154,50 @@ A run scribbles into several `GLASS/`-relative paths:
 
 ## Skills in this workspace
 
-`skills/karphathy-guidelines/SKILL.md` and `skills/tomomi-gui-style/SKILL.md` are local skills available to Claude Code in this directory. The GUI-style skill is unrelated to the GLASS model code and only applies if you start building Tkinter/ttk tooling around it.
+`skills/karphathy-guidelines/SKILL.md` and `skills/tomomi-gui-style/SKILL.md` are local skills available to Claude Code in this directory. **The GUI-style skill is now load-bearing** — `synthesizer_app/ui/` must follow it (Meiryo 12 / `primary.TButton` / `custom.TLabelframe` / TR copyright footer / threaded workers + `root.after(0, ...)` posting).
+
+## NG-data synthesis GUI app (work in progress)
+
+The end deliverable of this workspace is **a Tkinter desktop app that synthesizes NG (anomaly) images + binary masks for downstream AI anomaly-detection training**. The GLASS reproduction work was groundwork for this; the app reuses GLASS's LAS branch only (GAS / discriminator / training loop are out of scope).
+
+Confirmed decisions (see `00.docs/GLASS_synth_gui_plan.md` §10):
+
+| Decision | Value |
+|---|---|
+| GUI framework | pure Tkinter + ttk (no Pygubu) |
+| Output format | MVTec-compatible only (`<class>/test/synthetic/`, `<class>/ground_truth/synthetic/`) |
+| OK-image resolution | preserve original (synthesize at `working_size=288` internally, then resize to source res) |
+| Texture source | extensible: any directory walked recursively for image files (DTD today, in-house defect photos later) |
+| Class scope | one class per app instance |
+| Foreground mask absent | warn but proceed |
+| `dump_synthetic.py` | refactored to call `synthesizer_app.core.synthesis` (regression-checked) |
+
+Phase status: **Phase 0 (skeleton) and Phase 1 (core synthesis function + CLI refactor + unit tests) are done as of 2026-05-02.** Phase 2 (minimum GUI: load OK + texture + output dirs, single preview) is the next step.
+
+### Synthesis API (single source of truth)
+
+```python
+from synthesizer_app.core.synthesis import SynthParams, synthesize_one
+import numpy as np, torch, imgaug
+
+# All three RNGs must be seeded for reproducibility — perlin.py uses imgaug
+# internally (iaa.Affine rotate), which has its own RNG.
+np.random.seed(0); torch.manual_seed(0); imgaug.seed(0)
+
+result = synthesize_one(
+    image=PIL.Image.open("ok.png").convert("RGB"),
+    texture=PIL.Image.open("dtd.jpg").convert("RGB"),
+    params=SynthParams(working_size=288, output_size=None),  # None = preserve source res
+)
+# result.ng_image_bgr  : H x W x 3 BGR uint8 at output res
+# result.mask_uint8    : H x W   0/255 uint8 binary mask at output res
+# result.beta_used     : the sampled beta (for logging / labels.csv)
+```
+
+`working_size` must be divisible by `downsampling` (default 8) — Perlin mask generation is square-only upstream, so non-square output is achieved by synthesizing at a square `working_size` and resizing to the source aspect ratio at the end.
+
+Run unit tests:
+
+```bash
+cd GLASS && "$GLASS_PY" -m unittest synthesizer_app.tests.test_synthesis -v
+```
