@@ -15,7 +15,9 @@ GLASS（[A Unified Anomaly Synthesis Strategy with Gradient Ascent for Industria
 01.GLASS/
 ├── 00.docs/
 │   ├── 2407.09359v1.pdf                      論文
-│   └── GLASS_synth_gui_plan.md               GUI アプリ実装プラン (Phase 0〜6)
+│   ├── GLASS_synth_gui_plan.md               GUI アプリ実装プラン (Phase 0〜6)
+│   ├── GLASS_synthesizer_user_manual.md      GUI アプリのユーザーマニュアル（日本語、画面キャプチャ付き）
+│   └── manual_screens/                       マニュアル用スクリーンショット (1600×900 PNG, 7 枚)
 ├── 01.reports/
 │   ├── GLASS_execution_plan.md               実行計画（環境構築〜本実行まで）
 │   └── GLASS_dependency_install_report.md    依存導入の試行錯誤と最終構成
@@ -49,6 +51,7 @@ GLASS（[A Unified Anomaly Synthesis Strategy with Gradient Ascent for Industria
 
 | 目的 | ドキュメント |
 |---|---|
+| **NG データ合成 GUI アプリのユーザーマニュアル**（各ウィジェットの操作方法・ワークフロー・出力構造、画面キャプチャ付き） | [`00.docs/GLASS_synthesizer_user_manual.md`](./00.docs/GLASS_synthesizer_user_manual.md) |
 | **NG データ合成 GUI アプリの実装プラン** (Phase 構成・確定事項・受け入れ基準) | [`00.docs/GLASS_synth_gui_plan.md`](./00.docs/GLASS_synth_gui_plan.md) |
 | 環境構築・実行手順・想定リスクをまとめて知りたい | [`01.reports/GLASS_execution_plan.md`](./01.reports/GLASS_execution_plan.md) |
 | 実際に行った依存インストールの記録（どこで詰まり、どう解決したか） | [`01.reports/GLASS_dependency_install_report.md`](./01.reports/GLASS_dependency_install_report.md) |
@@ -142,6 +145,9 @@ cd GLASS && "$GLASS_PY" -m unittest synthesizer_app.tests.test_synthesis -v
 ```
 
 **確定事項** (プラン §10): 純 Tkinter / MVTec 互換出力 / 元解像度保持 / 1 クラス専用 / fg マスク無し時は警告のみ / `dump_synthetic.py` リファクタ済。
+
+操作方法・各ウィジェットの説明・典型的なワークフローについては [`00.docs/GLASS_synthesizer_user_manual.md`](./00.docs/GLASS_synthesizer_user_manual.md) (画面キャプチャ付き、日本語) を参照。マニュアル用スクリーンショットを更新したい場合は、UI を変更後に
+`"$GLASS_PY" GLASS/synthesizer_app/tests/_capture_manual_screens.py` を実行すれば `00.docs/manual_screens/*.png` が再生成される。
 
 #### 公開リポへの反映フロー
 
