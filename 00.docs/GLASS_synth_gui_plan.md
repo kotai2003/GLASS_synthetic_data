@@ -43,7 +43,7 @@ GLASS の **LAS (Local Anomaly Synthesis)** ロジックを使って **NG 画像
 
 | 既存資産 | 流用方法 |
 |---|---|
-| `GLASS/datasets/mvtec.py:172-212` (`__getitem__` の LAS 部分) | **コア関数として抽出** (`synthesizer_app/core/synthesis.py`) |
+| `GLASS/datasets/mvtec.py:172-212` (`__getitem__` の LAS 部分) | **コア関数として抽出** (`synthesize_gui/core/synthesis.py`) |
 | `GLASS/perlin.py` (`perlin_mask`, `rand_perlin_2d_np`) | そのまま import |
 | `GLASS/utils.py:torch_format_2_numpy_img` | そのまま import (denorm 用) |
 | `GLASS/dump_synthetic.py` | 廃止せず、CLI バッチ用途として残し、内部で `core.synthesis` を呼ぶ形にリファクタ |
@@ -60,7 +60,7 @@ GLASS の **LAS (Local Anomaly Synthesis)** ロジックを使って **NG 画像
 ### 3.1 全体ディレクトリ構成 (新規)
 
 ```
-GLASS/synthesizer_app/                   ← GLASS 配下に新規追加
+synthesize_gui/                          ← 01.GLASS 直下（2026-05-17 に GLASS 配下から移動、GLASS と並列）
 ├── gui_main.py                          ← ロジック層 (TR 規約: GuiXxx)
 ├── ui/
 │   ├── __init__.py
@@ -80,7 +80,7 @@ GLASS/synthesizer_app/                   ← GLASS 配下に新規追加
 ```
 
 `GLASS/dump_synthetic.py` は **GLASS 直下に残す** (既存ユーザを破壊しない)。
-内部実装だけ `synthesizer_app.core.synthesis` を呼ぶ薄いラッパに置き換える。
+内部実装だけ `synthesize_gui.core.synthesis` を呼ぶ薄いラッパに置き換える。
 
 ### 3.2 レイヤ分離 (TOMOMI GUI 規約)
 
@@ -231,7 +231,7 @@ sample_id, ng_image, mask, source_image, beta, perlin_scale_x, perlin_scale_y, s
 ## 6. 実装フェーズ (incremental)
 
 ### Phase 0 ─ 準備 (1 セッション)
-- [ ] `synthesizer_app/` 雛形作成、`custom_styles_jp.py` を skill から複製
+- [ ] `synthesize_gui/` 雛形作成、`custom_styles_jp.py` を skill から複製
 - [ ] 空の `gui_main.py` / `gui_main_ui.py` で「タイトルバーが表示されるだけのアプリ」起動確認
 - [ ] `run.bat` で `glass_env` の python から起動できることを確認
 
@@ -292,7 +292,7 @@ sample_id, ng_image, mask, source_image, beta, perlin_scale_x, perlin_scale_y, s
 **追加が必要:**
 - `pygubu` (任意、UI ファイル管理が楽になる) — pure ttk でも書けるので Phase 1-3 は不要
 
-`requirements.txt` (synthesizer_app 用):
+`requirements.txt` (synthesize_gui 用):
 ```
 # 既存 glass_env と同じピンに従う。差分のみここに記述。
 # Phase 6 でパッケージするときに使用。

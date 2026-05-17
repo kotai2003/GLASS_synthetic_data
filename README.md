@@ -7,7 +7,8 @@ GLASS（[A Unified Anomaly Synthesis Strategy with Gradient Ascent for Industria
 **最終ゴール**: 手元の OK 画像と任意のテクスチャ画像から、下流 AI 異常検知モデル (PatchCore / EfficientAD など) の学習に使える **NG 画像 + 二値マスク** を MVTec 互換レイアウトで生成する Tkinter デスクトップアプリ。
 
 **📦 公開リポジトリ (standalone)**: https://github.com/kotai2003/glass-synthesizer-app
-本ワークスペースの `GLASS/synthesizer_app/` を vendored perlin 込みで公開し、clone 単体で動作するようにしたもの。本ワークスペースは「開発+検証 + 上流 GLASS との対比」用、公開リポは「配布用」と棲み分けます。
+本ワークスペースの `synthesize_gui/`（vendored perlin 込みで clone 単体動作可）を公開していたもの。
+**ただし 2026-05-17 に GUI アプリを `GLASS/synthesizer_app/` から `01.GLASS/synthesize_gui/` へ git 履歴なしで移動したため、従来の subtree-split 公開フローは無効**。公開リポは現状 stale。再開時は公開手段を再合意のこと（`00.docs/git_push_guide.md` / `CLAUDE.md` 参照）。
 
 ## ディレクトリ構成
 
@@ -22,24 +23,24 @@ GLASS（[A Unified Anomaly Synthesis Strategy with Gradient Ascent for Industria
 │   ├── GLASS_execution_plan.md               実行計画（環境構築〜本実行まで）
 │   └── GLASS_dependency_install_report.md    依存導入の試行錯誤と最終構成
 ├── GLASS/                                    上流 clone（.gitignore 済み）
-│   ├── dump_synthetic.py                     合成データのみダンプする CLI（synthesizer_app.core 経由）
-│   ├── synthesizer_app/                      ★ NG データ合成 GUI アプリ
-│   │   ├── core/                             LAS 合成エンジン
-│   │   │   ├── synthesis.py, exporter.py, io_utils.py
-│   │   │   └── _vendored/perlin.py           上流 perlin.py を vendored (MIT 帰属)
-│   │   ├── ui/                               Tkinter UI 層 + custom_styles_jp.py + ロゴ
-│   │   ├── tests/                            unittest
-│   │   ├── LICENSE / LICENSE_GLASS           MIT (本体) + 上流 MIT (vendored 部分)
-│   │   ├── README.md                         standalone repo 用
-│   │   └── requirements.txt                  glass_env 互換のピン
+│   ├── dump_synthetic.py                     合成データのみダンプする CLI（../synthesize_gui を import）
 │   ├── requirements.txt                      上流の元 pinning（無修正）
 │   ├── requirements_original.txt             requirements.txt のバックアップコピー
 │   └── requirements_updated_current_env.txt  Py3.13 環境向けの試行（不採用、参考保管）
+├── synthesize_gui/                           ★ NG データ合成 GUI アプリ（GLASS と並列、親 01.GLASS リポジトリで管理）
+│   ├── core/                                 LAS 合成エンジン
+│   │   ├── synthesis.py, exporter.py, io_utils.py
+│   │   └── _vendored/perlin.py               上流 perlin.py を vendored (MIT 帰属)
+│   ├── ui/                                   Tkinter UI 層 + custom_styles_jp.py + ロゴ
+│   ├── tests/                                unittest
+│   ├── LICENSE / LICENSE_GLASS               MIT (本体) + 上流 MIT (vendored 部分)
+│   ├── README.md                             配布メタ
+│   └── requirements.txt                      glass_env 互換のピン
 ├── synthetic_dump/                           dump_synthetic.py の出力
 │   └── <class>/{original,synthetic,mask,panel}/*.png
 ├── skills/                                   Claude Code 用ローカルスキル
 │   ├── karphathy-guidelines/
-│   └── tomomi-gui-style/                     TR 統一 GUI デザイン（synthesizer_app に適用）
+│   └── tomomi-gui-style/                     TR 統一 GUI デザイン（synthesize_gui に適用）
 ├── CLAUDE.md                                 Claude Code 向けコードベースガイド
 ├── README.md                                 本ファイル
 └── .gitignore
@@ -110,8 +111,9 @@ cd "GLASS"
 
 各クラスについて `original/`, `synthetic/`, `mask/`, `panel/` の 4 フォルダに 30 枚ずつ書き出す。`panel/` の 1 枚が「正常 ｜ 合成異常 ｜ マスク」の横並び比較画像。
 
-> 2026-05-02: 内部実装は `synthesizer_app.core.synthesis.synthesize_one` を呼ぶラッパに置換済み。
-> CLI の出力フォーマットは互換維持。
+> 2026-05-02: 内部実装は `synthesize_gui.core.synthesis.synthesize_one` を呼ぶラッパに置換済み。
+> CLI の出力フォーマットは互換維持。2026-05-17 に GUI アプリを `../synthesize_gui/` へ移動したため、
+> `dump_synthetic.py` は親ディレクトリ（GLASS の 1 つ上）を `sys.path` に追加して import する。
 
 ### NG データ合成 GUI アプリ
 
@@ -119,7 +121,7 @@ cd "GLASS"
 **Phase 0〜5 完了** (2026-05-02) — 基本機能・Configure タブ・スレッドワーカー・サムネイルストリップ全て実装済。
 
 ```
-GLASS/synthesizer_app/
+synthesize_gui/                 （01.GLASS 直下、GLASS/ と並列）
 ├── core/
 │   ├── synthesis.py            synthesize_one(image, texture, params) -> ng + mask
 │   ├── exporter.py             MVTec 互換 writer
@@ -132,33 +134,29 @@ GLASS/synthesizer_app/
 └── requirements.txt
 ```
 
-起動:
+起動（`synthesize_gui/` を含むフォルダ＝`01.GLASS/` から）:
 
 ```bash
-cd GLASS && "$GLASS_PY" -m synthesizer_app.gui_main
+"$GLASS_PY" -m synthesize_gui.gui_main
 ```
 
-ユニットテスト:
+ユニットテスト（同じく `01.GLASS/` から）:
 
 ```bash
-cd GLASS && "$GLASS_PY" -m unittest synthesizer_app.tests.test_synthesis -v
+"$GLASS_PY" -m unittest synthesize_gui.tests.test_synthesis -v
 ```
 
 **確定事項** (プラン §10): 純 Tkinter / MVTec 互換出力 / 元解像度保持 / 1 クラス専用 / fg マスク無し時は警告のみ / `dump_synthetic.py` リファクタ済。
 
 操作方法・各ウィジェットの説明・典型的なワークフローについては [`00.docs/GLASS_synthesizer_user_manual.md`](./00.docs/GLASS_synthesizer_user_manual.md) (画面キャプチャ付き、日本語) を参照。マニュアル用スクリーンショットを更新したい場合は、UI を変更後に
-`"$GLASS_PY" GLASS/synthesizer_app/tests/_capture_manual_screens.py` を実行すれば `00.docs/manual_screens/*.png` が再生成される。
+`"$GLASS_PY" synthesize_gui/tests/_capture_manual_screens.py` を実行すれば `00.docs/manual_screens/*.png` が再生成される。
 
-#### 公開リポへの反映フロー
+#### 公開リポへの反映フロー（2026-05-17 時点で無効）
 
-`GLASS/synthesizer_app/` 下を変更したら以下を回す:
-
-```bash
-cd GLASS
-git add synthesizer_app/ ; git commit -m "..."
-git subtree split --prefix=synthesizer_app -b syn_split
-git push syn_origin syn_split:main
-```
+> 旧フロー（`GLASS` 内側リポジトリからの `git subtree split --prefix=synthesizer_app`）は
+> 2026-05-17 の移動で**機能しなくなった**。`synthesize_gui/` は `GLASS` 内側リポジトリの外、
+> 親 `01.GLASS` リポジトリ管理下に git 履歴なしで移動された。スタンドアロン公開を再開する場合は
+> 公開手段をユーザーと再合意すること（詳細は `CLAUDE.md` の "Standalone publication" 参照）。
 
 `syn_origin` は https://github.com/kotai2003/glass-synthesizer-app 。
 **`origin` (cqylunlun/GLASS 上流) には絶対 push しない**。
