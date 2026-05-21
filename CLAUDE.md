@@ -251,6 +251,12 @@ Install scope: the `.iss` leaves Inno's default `PrivilegesRequired=admin` → *
 
 **GPU compute:** `SynthParams.device` (`"auto"` default → CUDA if available else CPU; `"cuda"` forces GPU and hard-errors if unavailable; `"cpu"` forces CPU). The beta-blend and image/texture/mask tensors run on the resolved device; output is bit-identical CPU vs GPU (verified). The vendored `perlin.py` is numpy/imgaug and **stays on CPU** (it requires a CPU `mask_fg` tensor and must not be modified — MIT vendored). So GPU only accelerates the blend, not the heavier Perlin/imgaug mask generation; net speedup on small tensors is modest. The GUI preview status shows `[GPU]`/`[CPU]`.
 
+### Parent repo (`01.GLASS`) git workflow
+
+The parent repo's `origin` is **https://github.com/kotai2003/GLASS_synthetic_data.git**, default branch `main`. The established workflow is **commit straight to `main` and `git push origin main`** (all history is linear on `main`; no PR flow, single-developer personal repo). `synthesize_gui/`, the top-level build pipeline, docs, and `00.docs/manual_screens/*.png` all live here. Build outputs (`build/`, `dist/`, `build_cython_stage/`, `*.pyd`, `*.c`, `*.log`) and `synthetic_dump/` are gitignored — only pipeline **sources** and `build_all.log` are tracked.
+
+**CRITICAL — never stage the `GLASS` gitlink.** `GLASS/` appears in parent `git status` as a gitlink (`m GLASS` = dirty submodule content) because the inner repo carries the local `dump_synthetic.py` edit. When committing parent-repo work, **stage files explicitly** (or `git add` named paths) and leave `GLASS` unstaged — do **not** `git add GLASS` / `git add -A` it. Recording the gitlink pointer here is pointless (the inner `origin` is upstream `cqylunlun/GLASS`, push-forbidden) and risks clobbering that un-pushable local commit (see the top-of-file caveat). Verified 2026-05-21: commit `541bcdc` (synthesis rework + build pipeline + docs) was pushed this way with `GLASS` left untouched.
+
 ### Standalone publication (OUTDATED — needs revisiting)
 
 **The previous subtree-split workflow is broken as of the 2026-05-17 move.** It relied on `synthesizer_app/` living *inside* the GLASS inner repo so `git subtree split --prefix=synthesizer_app` could carve it out. The app now lives at `01.GLASS/synthesize_gui/`, tracked by the **parent `01.GLASS` git repo**, and was moved with **no git history carried over** (deliberate, per the user's instruction). The `git subtree split --prefix=synthesizer_app` command no longer has anything to operate on.
