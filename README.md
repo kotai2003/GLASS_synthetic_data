@@ -29,13 +29,21 @@ GLASS（[A Unified Anomaly Synthesis Strategy with Gradient Ascent for Industria
 │   └── requirements_updated_current_env.txt  Py3.13 環境向けの試行（不採用、参考保管）
 ├── synthesize_gui/                           ★ NG データ合成 GUI アプリ（GLASS と並列、親 01.GLASS リポジトリで管理）
 │   ├── core/                                 LAS 合成エンジン
-│   │   ├── synthesis.py, exporter.py, io_utils.py
+│   │   ├── synthesis.py, exporter.py, io_utils.py    (synthesis は GPU 対応)
 │   │   └── _vendored/perlin.py               上流 perlin.py を vendored (MIT 帰属)
-│   ├── ui/                                   Tkinter UI 層 + custom_styles_jp.py + ロゴ
+│   ├── ui/                                   Tkinter UI 層 + custom_styles_jp.py
+│   │   ├── TR_inc_logo.png                   ロゴ（読込時に背景を GUI 色へ合成）
+│   │   ├── app_icon.ico / app_icon.png       ウィンドウ/タスクバー/EXE アイコン
+│   │   └── _make_icon.py                     アイコン生成ユーティリティ
 │   ├── tests/                                unittest
 │   ├── LICENSE / LICENSE_GLASS               MIT (本体) + 上流 MIT (vendored 部分)
 │   ├── README.md                             配布メタ
-│   └── requirements.txt                      glass_env 互換のピン
+│   └── requirements.txt                      GLASS env 互換のピン
+├── build_all.py                              ★ 保護付きビルド全体パイプライン
+├── setup_cython.py                           Cython 化 (setup; ステージへコピーされ実行)
+├── glass_app.py                              薄いランチャ（バンドル内で唯一の可読ソース）
+├── glass_synthesizer.spec                    PyInstaller ONEDIR spec
+├── glass_synthesizer_setup.iss               Inno Setup インストーラスクリプト
 ├── synthetic_dump/                           dump_synthetic.py の出力
 │   └── <class>/{original,synthetic,mask,panel}/*.png
 ├── skills/                                   Claude Code 用ローカルスキル
@@ -61,11 +69,11 @@ GLASS（[A Unified Anomaly Synthesis Strategy with Gradient Ascent for Industria
 
 ## ローカル環境の現状
 
-GLASS は **conda env `glass_env` から起動する**。`requirements_original.txt` 完全準拠で構築済み。
+GLASS は **conda env `GLASS` から起動する**（旧ドキュメントの `glass_env` は誤り）。`requirements_original.txt` 完全準拠で構築済み。
 
 | 項目 | 値 |
 |---|---|
-| Python 実行ファイル | `C:/Users/seong/anaconda3/envs/glass_env/python.exe` |
+| Python 実行ファイル | `C:/Users/seong/anaconda3/envs/GLASS/python.exe` |
 | Python | 3.9.15 |
 | PyTorch | 2.1.2+cu118 / torchvision 0.16.2+cu118 |
 | GPU | NVIDIA RTX 3060 Laptop, 6 GB VRAM (driver 595.97 / CUDA 13.0 capable, cu118 ホイールは forward 互換で動作確認済み) |
@@ -78,7 +86,7 @@ GLASS は **conda env `glass_env` から起動する**。`requirements_original.
 ### Smoke test（1 クラスで端から端まで疎通、~11 分）
 
 ```bash
-GLASS_PY="C:/Users/seong/anaconda3/envs/glass_env/python.exe"
+GLASS_PY="C:/Users/seong/anaconda3/envs/GLASS/python.exe"
 cd "GLASS"
 "$GLASS_PY" main.py \
     --gpu 0 --seed 0 --test ckpt \
@@ -119,11 +127,13 @@ cd "GLASS"
 
 実装プランは [`00.docs/GLASS_synth_gui_plan.md`](./00.docs/GLASS_synth_gui_plan.md)。
 **Phase 0〜5 完了** (2026-05-02) — 基本機能・Configure タブ・スレッドワーカー・サムネイルストリップ全て実装済。
+**2026-05-18: GPU 演算対応・ブランディング（ロゴ背景修正＋専用アプリアイコン）・配布パッケージ化（Cython 保護 exe ＋ Inno Setup インストーラ）完了。**
+**2026-05-19: 合成をフル解像度・非正規化・ソフトマスク方式に刷新。** Perlin マスクのみ `working_size` で生成し、ブレンドは出力解像度で実行 → **マスク外の画素は元画像とビット完全一致**（全体の質感劣化＝旧 288px 縮小→拡大／正規化往復／マスクのジャギーを解消）。`working_size` は画質の天井ではなく異常マスクの粒度・速度つまみに。決定性契約は不変（テスト 5/5）。同方式を載せた保護 exe ＋インストーラを再ビルド・再検証 PASS。
 
 ```
 synthesize_gui/                 （01.GLASS 直下、GLASS/ と並列）
 ├── core/
-│   ├── synthesis.py            synthesize_one(image, texture, params) -> ng + mask
+│   ├── synthesis.py            synthesize_one(image, texture, params) -> ng + mask（フル解像度・非正規化・ソフトマスク合成）
 │   ├── exporter.py             MVTec 互換 writer
 │   ├── io_utils.py             再帰的画像列挙
 │   └── _vendored/perlin.py     上流 perlin.py を MIT vendoring (clone 単体で動作可)
@@ -160,6 +170,31 @@ synthesize_gui/                 （01.GLASS 直下、GLASS/ と並列）
 
 `syn_origin` は https://github.com/kotai2003/glass-synthesizer-app 。
 **`origin` (cqylunlun/GLASS 上流) には絶対 push しない**。
+
+### GPU 演算
+
+合成の β ブレンド（画像 × テクスチャ × マスク）は CUDA があれば GPU で実行される。`SynthParams.device`：
+
+- `"auto"`（既定）— GPU があれば CUDA、無ければ CPU
+- `"cuda"` — GPU 強制（無ければエラー）
+- `"cpu"` — CPU 強制
+
+出力は CPU/GPU でビット完全一致を確認済み。プレビューのステータス行に `[GPU]`/`[CPU]` を表示。
+※ vendored の `perlin.py`（MIT, 改変不可）は numpy/imgaug 実装で **CPU 固定**。GPU 化されるのはブレンド部のみ。
+
+## 保護付き配布ビルド（Cython + PyInstaller + Inno Setup）
+
+リバースエンジニアリング対策として、IP モジュール 7 本（synthesis/exporter/io_utils/perlin/gui_main/gui_main_ui/custom_styles_jp）を **Cython でネイティブ `.pyd` 化**し、ソースを除去した状態で PyInstaller ONEDIR 化、さらに **Inno Setup でインストーラ** を生成する。TOMOMI 標準（`../00.FORESIGHT_VIEWER_TR100` 準拠）。
+
+```bash
+# 01.GLASS/ から、GLASS env で。ステージ→Cython→PyInstaller→検証 を一括実行
+"$GLASS_PY" build_all.py
+```
+
+- **ビルド出力は OneDrive 外**：`C:\TR_build\GLASS\{build_cython_stage,build,dist}\`（`GLASS_BUILD_ROOT` で変更可）。OneDrive 同期が巨大出力ツリーをロックし PyInstaller COLLECT が `WinError 5` で失敗するため。リポジトリへ戻るのは `build_all.log` のみ。
+- 配布物：`C:\TR_build\GLASS\dist\GLASS_Synthesizer\GLASS_Synthesizer.exe`（約 5.7 GB。cu118 torch が CUDA 同梱のため）。
+- インストーラ：`glass_synthesizer_setup.iss` を Inno Setup でコンパイル → `Output/` に `GLASS_Synthesizer_Setup.exe`。
+- `build_all.py` の Step3 検証：保護ソース非混入・全 `.pyd` 同梱・`.pyd` import・起動時 stderr にクラッシュ痕跡が無いこと（windowed exe はエラーダイアログで生存し続けるため「生存」では判定しない）。詳細・既知の落とし穴（`tkinter.ttk` / `imageio` メタデータ）は [`CLAUDE.md`](./CLAUDE.md) の "Building the protected `.exe` distributable" を参照。
 
 ## 検証済みの動作
 

@@ -6,3 +6,17 @@ GLASS/
 
 # dump_synthetic.py の出力（再生成可能な検証用 PNG、リポジトリにバンドルしない）
 synthetic_dump/
+
+# Cython + PyInstaller + Inno Setup ビルド成果物（build_all.py で再生成可能、巨大）
+# パイプラインのソース（build_all.py / setup_cython.py / glass_app.py /
+# glass_synthesizer.spec / glass_synthesizer_setup.iss）は追跡するが、
+# 出力物・ログは追跡しない。実出力は OneDrive 外（C:\TR_build\GLASS）。
+build/
+dist/
+build_cython_stage/
+build_all.log
+iscc_build.log
+*.c
+*.pyd
+__pycache__/
+*.pyc

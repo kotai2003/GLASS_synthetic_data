@@ -38,7 +38,7 @@ provided imgaug 0.4.0 installs (which means NumPy < 2.0).
 ```bash
 pip install -r requirements.txt
 # or, if you already have a GLASS-equivalent env:
-#   conda env create -f environment.yml ; conda activate glass_env
+#   conda env create -f environment.yml ; conda activate GLASS
 ```
 
 Required packages: `torch`, `torchvision`, `Pillow`, `opencv-python`, `imgaug==0.4.0`, `numpy<2`,
@@ -62,7 +62,7 @@ random texture aug, foreground mask, seed) tabs.
 
 | Knob | Range | Effect |
 |---|---|---|
-| Working size | 256/288/320/384/512 | Internal LAS resolution; output is resized back to source aspect |
+| Working size | 256/288/320/384/512 | Resolution of the **Perlin anomaly mask only**. The OK image & texture are not downscaled — the beta-blend runs at the output resolution, so pixels outside the mask stay bit-identical to the source (no whole-image quality loss). This knob trades anomaly-mask granularity vs. speed, not output sharpness |
 | Perlin scale min/max | 0–7 | Granularity range of the Perlin mask (`2**min` × `2**max`) |
 | Beta mean | 0.20–0.80 | Center of the texture/source mixing coefficient `β ~ N(mean, std)`, clipped to `[0.2, 0.8]` |
 | Beta std | 0.00–0.30 | Spread of `β` |
@@ -73,10 +73,19 @@ random texture aug, foreground mask, seed) tabs.
 Slider changes after the first preview trigger a 200 ms debounced live re-render, so the visual
 effect of each knob is immediate.
 
+## GPU
+
+The beta-blend (image × texture × mask) runs on CUDA when available. `SynthParams.device`:
+`"auto"` (default — CUDA if present, else CPU), `"cuda"` (force GPU, errors if unavailable),
+`"cpu"` (force CPU). CPU/GPU output is bit-identical. The vendored `perlin.py` (MIT, unmodified)
+is numpy/imgaug and stays on CPU, so only the blend is GPU-accelerated. The preview status line
+shows `[GPU]` / `[CPU]`.
+
 ## Reproducibility
 
-The app seeds `numpy.random`, `torch`, **and `imgaug`** before each sample (the latter is required
-because `perlin.py` rotates the noise via `imgaug.iaa.Affine`, whose RNG is independent of np/torch).
+The app seeds `numpy.random`, `torch` (+ `torch.cuda`), **and `imgaug`** before each sample (the
+latter is required because `perlin.py` rotates the noise via `imgaug.iaa.Affine`, whose RNG is
+independent of np/torch).
 
 ## License
 

@@ -47,6 +47,8 @@ from synthesize_gui.core.io_utils import (
 def _seed_all(seed):
     np.random.seed(seed)
     torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
     imgaug.seed(seed)
 
 
@@ -330,8 +332,9 @@ class GuiSynth(GuiSynthUI):
 
             self._last_preview_src = src_path
             self._last_preview_tex = tex_path
+            dev = "GPU" if torch.cuda.is_available() else "CPU"
             self.status_var_ui.set(
-                f"Preview: src={os.path.basename(src_path)}, "
+                f"Preview [{dev}]: src={os.path.basename(src_path)}, "
                 f"tex={os.path.basename(tex_path)}, beta={result.beta_used:.3f}, "
                 f"ws={params.working_size}, perlin=[{params.perlin_scale_min},{params.perlin_scale_max}], "
                 f"fg={'on' if params.use_foreground else 'off'}"

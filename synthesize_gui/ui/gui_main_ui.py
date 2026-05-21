@@ -26,6 +26,8 @@ from . import custom_styles_jp
 
 _HERE = pathlib.Path(__file__).parent
 LOGO_PATH = _HERE / "TR_inc_logo.png"
+ICON_ICO_PATH = _HERE / "app_icon.ico"
+ICON_PNG_PATH = _HERE / "app_icon.png"
 
 
 class GuiSynthUI:
@@ -36,6 +38,7 @@ class GuiSynthUI:
         custom_styles_jp.setup_ttk_styles(master)
         self.root = master
         self.root.title(f"{self.APP_NAME} by TOMOMI RESEARCH, INC.")
+        self._set_window_icon()
         self.root.geometry("1280x800")
         self.root.minsize(1024, 640)
 
@@ -68,6 +71,26 @@ class GuiSynthUI:
         self._photo_canvas_right = None
 
         self._build_layout()
+
+    # ------------------------------------------------------------------
+    # Window icon
+    # ------------------------------------------------------------------
+    def _set_window_icon(self):
+        """Title-bar / taskbar icon. .ico (multi-res) is the most reliable
+        on Windows; keep a PhotoImage fallback so a missing/broken .ico
+        never blocks startup."""
+        try:
+            if ICON_ICO_PATH.exists():
+                self.root.iconbitmap(default=str(ICON_ICO_PATH))
+                return
+        except Exception:
+            pass
+        try:
+            if ICON_PNG_PATH.exists():
+                self._photo_icon = tk.PhotoImage(file=str(ICON_PNG_PATH))
+                self.root.iconphoto(True, self._photo_icon)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Layout
@@ -149,7 +172,21 @@ class GuiSynthUI:
         logo_frame.pack(expand=False, fill="x", side="top", padx=5, pady=(8, 4))
         try:
             from PIL import Image, ImageTk
-            img = Image.open(LOGO_PATH)
+            import numpy as np
+
+            img = Image.open(LOGO_PATH).convert("RGB")
+            # The asset has a baked-in solid black background (no alpha), which
+            # would render as a black box on the light ttk surface. Recover a
+            # coverage mask from the per-pixel max channel (black bg -> 0,
+            # colored text -> ~1) and composite onto the real GUI background
+            # color so the box disappears and the anti-aliased edges blend.
+            r16, g16, b16 = self.root.winfo_rgb(self.root.cget("background"))
+            bg = np.array([r16, g16, b16], dtype=np.float32) / 257.0
+
+            arr = np.asarray(img, dtype=np.float32)
+            alpha = arr.max(axis=2, keepdims=True) / 255.0
+            blended = arr * alpha + bg * (1.0 - alpha)
+            img = Image.fromarray(blended.clip(0, 255).astype("uint8"), "RGB")
             img.thumbnail((220, 80))
             self._photo_logo = ImageTk.PhotoImage(img)
             ttk.Label(logo_frame, image=self._photo_logo,

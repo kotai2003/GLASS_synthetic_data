@@ -8,11 +8,16 @@ where Perlin x DTD blending is implemented in this workspace; the GUI app
 and `dump_synthetic.py` both call into here.
 
 Output modes:
-  - working_size (default 288): the resolution at which LAS runs internally.
-    Must be square; Perlin mask generation is square-only upstream.
+  - working_size (default 288): the resolution at which the Perlin anomaly
+    mask is generated. Must be square; Perlin generation is square-only
+    upstream. The OK image and texture are NOT downsampled to this size --
+    only the mask is. The beta-blend runs at the full output resolution so
+    non-anomalous regions stay bit-identical to the source image (no
+    downscale->upscale roundtrip and no ImageNet normalize roundtrip, which
+    were the two sources of whole-image "texture" degradation).
   - output_size (None or int):
-        None -> return at original PIL image size (Q3 default)
-        int  -> resize the final result to this square size
+        None -> blend + return at the original PIL image size (Q3 default)
+        int  -> blend + return at this square size
                 (used by `dump_synthetic.py` to keep regression == 288)
 
 The function is pure: same global RNG state in -> same output out. Caller
@@ -37,9 +42,6 @@ from torchvision import transforms
 
 from ._vendored.perlin import perlin_mask
 
-IMAGENET_MEAN = [0.485, 0.456, 0.406]
-IMAGENET_STD = [0.229, 0.224, 0.225]
-
 
 @dataclass
 class SynthParams:
@@ -54,6 +56,7 @@ class SynthParams:
     rand_aug: bool = True
     downsampling: int = 8  # working_size // downsampling -> feat_size for mask_s
     use_foreground: bool = False  # if True, fg_mask must be provided
+    device: str = "auto"  # "auto" -> CUDA if available else CPU; "cuda"; "cpu"
 
 
 @dataclass
@@ -68,63 +71,76 @@ class SynthResult:
     perlin_thr_kind: str  # "or", "and", or "single" (which combination was sampled)
 
 
-def _build_image_transform(working_size: int) -> transforms.Compose:
-    """Replicates `MVTecDataset.transform_img` for fg=0, no rotation/flip."""
-    return transforms.Compose([
-        transforms.Resize(working_size),
-        transforms.CenterCrop(working_size),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-    ])
+def _resolve_device(name: str) -> torch.device:
+    """Map SynthParams.device to a torch.device.
 
-
-def _build_random_texture_transform(working_size: int) -> transforms.Compose:
-    """Replicates `MVTecDataset.rand_augmenter`: 3 random aug picks from a pool."""
-    list_aug = [
-        transforms.ColorJitter(contrast=(0.8, 1.2)),
-        transforms.ColorJitter(brightness=(0.8, 1.2)),
-        transforms.ColorJitter(saturation=(0.8, 1.2), hue=(-0.2, 0.2)),
-        transforms.RandomHorizontalFlip(p=1),
-        transforms.RandomVerticalFlip(p=1),
-        transforms.RandomGrayscale(p=1),
-        transforms.RandomAutocontrast(p=1),
-        transforms.RandomEqualize(p=1),
-        transforms.RandomAffine(degrees=(-45, 45)),
-    ]
-    aug_idx = np.random.choice(np.arange(len(list_aug)), 3, replace=False)
-    return transforms.Compose([
-        transforms.Resize(working_size),
-        list_aug[aug_idx[0]],
-        list_aug[aug_idx[1]],
-        list_aug[aug_idx[2]],
-        transforms.CenterCrop(working_size),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-    ])
-
-
-def _denorm_to_bgr_uint8(img_chw: torch.Tensor) -> np.ndarray:
-    """3xHxW normalized tensor -> HxWx3 BGR uint8.
-
-    Same transformation as `utils.torch_format_2_numpy_img` for the 3-channel path.
+    "auto" -> CUDA when a GPU is visible, else CPU (no hard dependency on a
+    GPU being present, so the same build runs on CPU-only machines).
+    "cuda"/"gpu" -> CUDA, hard-erroring if unavailable (explicit opt-in).
+    "cpu" -> force CPU.
     """
-    arr = img_chw.detach().cpu().numpy()
-    if arr.shape[0] != 3:
-        raise ValueError(f"expected 3xHxW, got {arr.shape}")
-    arr = arr.transpose(1, 2, 0)
-    arr = arr * np.array(IMAGENET_STD) + np.array(IMAGENET_MEAN)
-    arr = arr[:, :, [2, 1, 0]]  # RGB -> BGR
-    arr = np.clip(arr, 0.0, 1.0)
-    return (arr * 255).astype(np.uint8)
+    n = (name or "auto").strip().lower()
+    if n == "cpu":
+        return torch.device("cpu")
+    if n in ("cuda", "gpu"):
+        if not torch.cuda.is_available():
+            raise RuntimeError(
+                "device='cuda' requested but torch.cuda.is_available() is "
+                "False (no CUDA GPU / driver visible to this build)."
+            )
+        return torch.device("cuda")
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def _resize_image_bgr(arr: np.ndarray, target_hw: Tuple[int, int]) -> np.ndarray:
-    """Resize BGR uint8 image to (H, W). Avoids importing cv2 at module top."""
-    import cv2
+def _image_to_unit_tensor(
+    image: PIL.Image.Image, target_hw: Tuple[int, int]
+) -> torch.Tensor:
+    """OK image -> 3xHxW float tensor in [0, 1], WITHOUT ImageNet normalize.
+
+    When the image is already at the target resolution (the common
+    output_size=None case) the source pixels are used verbatim, so any
+    region the anomaly mask does not touch round-trips back to the exact
+    original bytes. A genuine resolution change triggers a single
+    high-quality resize -- never the old downscale->upscale roundtrip.
+    """
     h, w = target_hw
-    if arr.shape[0] == h and arr.shape[1] == w:
-        return arr
-    return cv2.resize(arr, (w, h), interpolation=cv2.INTER_LINEAR)
+    img = image.convert("RGB")
+    if img.height != h or img.width != w:
+        img = img.resize((w, h), PIL.Image.LANCZOS)
+    arr = np.array(img, dtype=np.uint8)  # np.array copies -> writable tensor
+    return torch.from_numpy(arr).permute(2, 0, 1).contiguous().float() / 255.0
+
+
+def _texture_to_unit_tensor(
+    texture: PIL.Image.Image, target_hw: Tuple[int, int], rand_aug: bool
+) -> torch.Tensor:
+    """Texture -> 3xHxW float tensor in [0, 1] covering the full output frame.
+
+    Mirrors `MVTecDataset.rand_augmenter`'s 3-from-pool pick so the global
+    np.random draw order is unchanged (seeded runs stay reproducible), but
+    produces an un-normalized tensor at the output resolution instead of a
+    normalized square `working_size` crop. Resize(max(h, w)) guarantees both
+    edges are >= the crop, so CenterCrop((h, w)) always has full coverage.
+    """
+    h, w = target_hw
+    tex = texture.convert("RGB")
+    steps = [transforms.Resize(max(h, w))]
+    if rand_aug:
+        list_aug = [
+            transforms.ColorJitter(contrast=(0.8, 1.2)),
+            transforms.ColorJitter(brightness=(0.8, 1.2)),
+            transforms.ColorJitter(saturation=(0.8, 1.2), hue=(-0.2, 0.2)),
+            transforms.RandomHorizontalFlip(p=1),
+            transforms.RandomVerticalFlip(p=1),
+            transforms.RandomGrayscale(p=1),
+            transforms.RandomAutocontrast(p=1),
+            transforms.RandomEqualize(p=1),
+            transforms.RandomAffine(degrees=(-45, 45)),
+        ]
+        aug_idx = np.random.choice(np.arange(len(list_aug)), 3, replace=False)
+        steps += [list_aug[aug_idx[0]], list_aug[aug_idx[1]], list_aug[aug_idx[2]]]
+    steps += [transforms.CenterCrop((h, w)), transforms.ToTensor()]
+    return transforms.Compose(steps)(tex)
 
 
 def _resize_mask_uint8(mask: np.ndarray, target_hw: Tuple[int, int]) -> np.ndarray:
@@ -161,19 +177,28 @@ def synthesize_one(
     if params.use_foreground and fg_mask is None:
         raise ValueError("use_foreground=True but fg_mask is None")
 
+    # Resolution at which we composite the final image. output_size=None
+    # keeps the source resolution so untouched regions stay bit-identical to
+    # the original (no whole-image downscale/upscale, no normalize roundtrip).
+    if params.output_size is None:
+        target_h, target_w = image.height, image.width
+    else:
+        target_h = target_w = int(params.output_size)
+
     work = params.working_size
     feat = work // params.downsampling
+    device = _resolve_device(params.device)
 
-    # --- 1. Transform OK image ----------------------------------------------
-    img_t = _build_image_transform(work)(image.convert("RGB"))  # 3 x W x W
+    # --- 1. OK image + texture at OUTPUT resolution (un-normalized) ---------
+    # The texture transform consumes the np.random.choice draw first, exactly
+    # as the original working-size pipeline did, so the global RNG draw order
+    # is unchanged and seeded runs stay reproducible.
+    tex_t = _texture_to_unit_tensor(
+        texture, (target_h, target_w), params.rand_aug
+    ).to(device)
+    img_t = _image_to_unit_tensor(image, (target_h, target_w)).to(device)
 
-    # --- 2. Transform texture -----------------------------------------------
-    if params.rand_aug:
-        tex_t = _build_random_texture_transform(work)(texture.convert("RGB"))
-    else:
-        tex_t = _build_image_transform(work)(texture.convert("RGB"))
-
-    # --- 3. Foreground mask -------------------------------------------------
+    # --- 2. Foreground mask (working res; perlin_mask is square-only) ------
     if params.use_foreground:
         # Match MVTecDataset: ToTensor then ceil to {0,1}, take channel 0.
         fg_t = transforms.Compose([
@@ -187,7 +212,9 @@ def synthesize_one(
         # MVTecDataset's `mask_fg = torch.tensor([1])` default.
         mask_fg = torch.tensor([1])
 
-    # --- 4. Perlin mask -----------------------------------------------------
+    # --- 3. Perlin mask at working resolution ------------------------------
+    # perlin_mask (vendored, unmodifiable) is numpy/imgaug, square-only, and
+    # CPU-bound; only the mask is generated at `work`, never the image.
     img_shape = (3, work, work)
     mask_s_np, mask_l_np = perlin_mask(
         img_shape,
@@ -197,28 +224,36 @@ def synthesize_one(
         mask_fg,
         flag=1,
     )
-    mask_s_t = torch.from_numpy(mask_s_np).float()
-    mask_l_t = torch.from_numpy(mask_l_np).float()
 
-    # --- 5. Beta blend ------------------------------------------------------
+    # --- 4. Soft-upsample the mask to OUTPUT resolution --------------------
+    # perlin_mask returns a hard {0,1} field at `work`; bilinear upsampling
+    # gives a soft alpha so the blend boundary is anti-aliased at the output
+    # resolution instead of a nearest-neighbour staircase.
+    import cv2
+    mask_soft = cv2.resize(
+        mask_l_np.astype(np.float32),
+        (target_w, target_h),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    m_t = torch.from_numpy(np.clip(mask_soft, 0.0, 1.0))[None, :, :].to(device)
+
+    # --- 5. Beta blend at OUTPUT resolution (runs on `device`) -------------
     beta = float(np.clip(np.random.normal(loc=params.beta_mean, scale=params.beta_std), 0.2, 0.8))
-    aug_image_t = (
-        img_t * (1 - mask_l_t)
-        + (1 - beta) * tex_t * mask_l_t
-        + beta * img_t * mask_l_t
+    aug_t = (
+        img_t * (1.0 - m_t)
+        + (1.0 - beta) * tex_t * m_t
+        + beta * img_t * m_t
     )
 
-    # --- 6. To numpy uint8 BGR (working resolution) -------------------------
-    ng_bgr_work = _denorm_to_bgr_uint8(aug_image_t)
+    # --- 6. To BGR uint8. Where m == 0, aug_t == img_t exactly, and since
+    #        img_t is the raw source (uint8 -> /255 -> *255 -> rint is the
+    #        identity) non-anomalous pixels round-trip back to the original
+    #        bytes -- zero background degradation. -------------------------
+    arr = aug_t.detach().cpu().numpy().transpose(1, 2, 0)  # HxWx3 RGB [0,1]
+    arr = np.clip(arr[:, :, ::-1], 0.0, 1.0)               # RGB -> BGR
+    ng_bgr = np.rint(arr * 255.0).astype(np.uint8)
 
-    # --- 7. Resolve output resolution ---------------------------------------
-    if params.output_size is None:
-        target_h, target_w = image.height, image.width
-    else:
-        target_h = target_w = int(params.output_size)
-    ng_bgr = _resize_image_bgr(ng_bgr_work, (target_h, target_w))
-
-    # Mask: working-res mask_l_t -> uint8 -> resize to output res
+    # --- 7. Binary GT mask at output res (MVTec ground_truth convention) --
     mask_l_uint8 = (mask_l_np > 0.5).astype(np.uint8) * 255
     mask_uint8 = _resize_mask_uint8(mask_l_uint8, (target_h, target_w))
 
